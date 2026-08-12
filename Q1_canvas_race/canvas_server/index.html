@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Canvas Grid — Frugal Testing Q1 Testbed</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+      color: #58a6ff;
+    }
+
+    #status-bar {
+      font-size: 0.8rem;
+      color: #8b949e;
+      margin-bottom: 16px;
+    }
+
+    #canvas-wrapper {
+      border: 2px solid #30363d;
+      border-radius: 8px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      /* id is crucial for pixel-targeting by automation */
+      background: #161b22;
+    }
+
+    #log-panel {
+      margin-top: 20px;
+      width: 520px;
+      max-height: 180px;
+      overflow-y: auto;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 0.72rem;
+      font-family: 'Consolas', monospace;
+      color: #8b949e;
+    }
+
+    #log-panel .log-entry { margin-bottom: 3px; }
+    #log-panel .log-entry.warn  { color: #f0883e; }
+    #log-panel .log-entry.error { color: #f85149; }
+    #log-panel .log-entry.ok    { color: #3fb950; }
+
+    #balance-display {
+      margin-top: 12px;
+      font-size: 0.85rem;
+      color: #c9d1d9;
+    }
+
+    #corruption-status {
+      margin-top: 8px;
+      font-size: 0.75rem;
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: #21262d;
+      border: 1px solid #30363d;
+    }
+  </style>
+</head>
+<body>
+  <h1>📡 Live Canvas Grid — Frugal Testing Q1 Testbed</h1>
+  <div id="status-bar">Connecting to WebSocket stream…</div>
+
+  <div id="canvas-wrapper">
+    <canvas id="grid-canvas" width="520" height="520"></canvas>
+  </div>
+
+  <div id="balance-display">Last balance: —</div>
+  <div id="corruption-status">Corruption boundary: <span id="boundary-msg">awaiting data…</span></div>
+
+  <div id="log-panel"></div>
+
+  <script>
+    // ── Constants ──────────────────────────────────────────────────────────────
+    const GRID_SIZE  = 10;
+    const CELL_SIZE  = 52;    // pixels per cell
+    const GRAY_COLOR = '#808080';
+
+    // ── Canvas setup ───────────────────────────────────────────────────────────
+    const canvas  = document.getElementById('grid-canvas');
+    const ctx     = canvas.getContext('2d');
+
+    canvas.width  = GRID_SIZE * CELL_SIZE;
+    canvas.height = GRID_SIZE * CELL_SIZE;
+
+    // Grid state: all cells start gray
+    const gridState = Array.from({ length: GRID_SIZE }, () =>
+      Array(GRID_SIZE).fill(GRAY_COLOR)
+    );
+
+    function drawGrid() {
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          ctx.fillStyle = gridState[r][c];
+          ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE - 2, CELL_SIZE - 2);
+
+          // Draw cell coordinates for debugging
+          ctx.fillStyle = 'rgba(255,255,255,0.25)';
+          ctx.font = '9px Consolas';
+          ctx.fillText(`${r},${c}`, c * CELL_SIZE + 4, r * CELL_SIZE + 14);
+        }
+      }
+    }
+
+    // Initial draw (all gray)
+    drawGrid();
+
+    // ── Public pixel-probe API (used by Playwright evaluate) ───────────────────
+    /**
+     * Returns the RGBA array at canvas pixel (x, y).
+     * Called from Python: page.evaluate("window.__getPixelColor(x, y)")
+     */
+    window.__getPixelColor = function(x, y) {
+      const px = ctx.getImageData(x, y, 1, 1).data;
+      return { r: px[0], g: px[1], b: px[2], a: px[3] };
+    };
+
+    /**
+     * Returns the center pixel coordinates of cell (row, col).
+     */
+    window.__getCellCenter = function(row, col) {
+      return {
+        x: col * CELL_SIZE + Math.floor(CELL_SIZE / 2),
+        y: row * CELL_SIZE + Math.floor(CELL_SIZE / 2),
+      };
+    };
+
+    /**
+     * Returns whether the cell at (row, col) is still in gray loading state.
+     * Gray threshold: R,G,B all within [110, 150] and max channel diff < 25.
+     */
+    window.__isCellGray = function(row, col) {
+      const center = window.__getCellCenter(row, col);
+      const px     = ctx.getImageData(center.x, center.y, 1, 1).data;
+      const r = px[0], g = px[1], b = px[2];
+      const avg  = (r + g + b) / 3;
+      const diff = Math.max(Math.abs(r-g), Math.abs(g-b), Math.abs(r-b));
+      return (avg >= 110 && avg <= 150 && diff < 25);
+    };
+
+    /**
+     * Returns the current grid state as a 2D array of hex color strings.
+     */
+    window.__getGridState = function() {
+      return gridState.map(row => [...row]);
+    };
+
+    // ── Logging ────────────────────────────────────────────────────────────────
+    const logPanel = document.getElementById('log-panel');
+    function log(msg, type = '') {
+      const div = document.createElement('div');
+      div.className = `log-entry ${type}`;
+      div.textContent = `[${new Date().toISOString().slice(11,23)}] ${msg}`;
+      logPanel.prepend(div);
+      if (logPanel.children.length > 100) logPanel.lastChild.remove();
+    }
+
+    // ── WebSocket ──────────────────────────────────────────────────────────────
+    const statusBar = document.getElementById('status-bar');
+    const ws        = new WebSocket(`ws://${location.host}`);
+
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      statusBar.textContent = '🟢 WebSocket connected — streaming live grid updates';
+      log('WebSocket connected', 'ok');
+    };
+
+    ws.onclose = () => {
+      statusBar.textContent = '🔴 WebSocket disconnected';
+      log('WebSocket disconnected', 'error');
+    };
+
+    ws.onerror = (e) => {
+      log(`WebSocket error: ${e}`, 'error');
+    };
+
+    ws.onmessage = (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch(e) {
+        log(`Unparsable message: ${event.data}`, 'error');
+        return;
+      }
+
+      if (data.type === 'init') {
+        log(`Init received — grid ${data.gridSize}×${data.gridSize}`, 'ok');
+
+      } else if (data.type === 'grid_update') {
+        data.updates.forEach(upd => {
+          gridState[upd.row][upd.col] = upd.color;
+          document.getElementById('balance-display').textContent =
+            `Last balance: ${upd.balance}  (tick #${upd.tick})`;
+        });
+        requestAnimationFrame(drawGrid);
+        log(`Grid update tick #${data.updates[0]?.tick} — ${data.updates.length} cell(s) changed`);
+
+      } else if (data.type === 'exception_boundary') {
+        document.getElementById('boundary-msg').textContent =
+          `⚠️ BOUNDARY TRIGGERED: ${data.code} — "${data.received}"`;
+        document.getElementById('corruption-status').style.borderColor = '#f85149';
+        log(`Exception boundary: ${data.message}`, 'error');
+
+      } else if (data.type === 'error') {
+        log(`Server error: ${data.message}`, 'error');
+
+      } else if (data.type === 'balance_ack') {
+        document.getElementById('boundary-msg').textContent =
+          `✅ Balance accepted: ${data.balance}`;
+        document.getElementById('corruption-status').style.borderColor = '#3fb950';
+        log(`Balance ack: ${data.balance}`, 'ok');
+      }
+    };
+
+    // ── Allow automation to send messages back through the WS ─────────────────
+    window.__sendMessage = function(payload) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+        return true;
+      }
+      return false;
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "canvas-streaming-server",
+  "version": "1.0.0",
+  "description": "Local HTML5 Canvas WebSocket streaming server for Q1 automation testing",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2"
+  }
+}
