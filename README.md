@@ -36,3 +36,16 @@ pip install -r Q1_canvas_race\requirements.txt
 playwright install chromium
 # Node deps for Q2 mock server
 cd Q2_crypto_replay\mock_server && npm install
+
+
+
+🚀 One-Time Setup (after cloning)
+powershell
+# 1. Install Python deps
+pip install playwright>=1.44.0 requests>=2.31.0
+playwright install chromium
+# 2. Install Node deps
+cd Q1_canvas_race/canvas_server && npm install && cd ../..
+cd Q2_crypto_replay/mock_server && npm install && cd ../..
+# 3. Run everything
+.\run_all.ps1
