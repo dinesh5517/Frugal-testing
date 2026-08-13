@@ -137,7 +137,9 @@ wss.on('connection', (ws, req) => {
   ws.on('error', (err) => console.error('[WS] Error:', err.message));
 });
 
-server.listen(PORT, () => {
-  console.log(`\n✅  Canvas Streaming Server running at http://localhost:${PORT}`);
-  console.log(`✅  WebSocket endpoint:          ws://localhost:${PORT}\n`);
+// Bind to 0.0.0.0 so the server accepts connections from all network interfaces
+// (required when running behind a reverse proxy or in a cloud environment)
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n✅  Canvas Streaming Server running at http://0.0.0.0:${PORT}`);
+  console.log(`✅  WebSocket endpoint:          ws://0.0.0.0:${PORT}\n`);
 });

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Live Canvas Grid — Frugal Testing Q1 Testbed</title>
+  <title>Live Canvas Grid — Frugal Testing Q1 | Kusuma</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -82,7 +82,7 @@
   </style>
 </head>
 <body>
-  <h1>📡 Live Canvas Grid — Frugal Testing Q1 Testbed</h1>
+  <h1>📡 Live Canvas Grid — Frugal Testing Q1 | Kusuma</h1>
   <div id="status-bar">Connecting to WebSocket stream…</div>
 
   <div id="canvas-wrapper">
@@ -179,27 +179,14 @@
       if (logPanel.children.length > 100) logPanel.lastChild.remove();
     }
 
-    // ── WebSocket ──────────────────────────────────────────────────────────────
+    // ── WebSocket with auto-reconnect (Fibonacci backoff) ─────────────────────
     const statusBar = document.getElementById('status-bar');
-    const ws        = new WebSocket(`ws://${location.host}`);
+    let   ws;
+    let   reconnectAttempts = 0;
+    const MAX_RECONNECT      = 5;
+    const RECONNECT_DELAYS   = [1000, 1000, 2000, 3000, 5000, 8000]; // Fibonacci ms
 
-    ws.binaryType = 'arraybuffer';
-
-    ws.onopen = () => {
-      statusBar.textContent = '🟢 WebSocket connected — streaming live grid updates';
-      log('WebSocket connected', 'ok');
-    };
-
-    ws.onclose = () => {
-      statusBar.textContent = '🔴 WebSocket disconnected';
-      log('WebSocket disconnected', 'error');
-    };
-
-    ws.onerror = (e) => {
-      log(`WebSocket error: ${e}`, 'error');
-    };
-
-    ws.onmessage = (event) => {
+    function handleMessage(event) {
       let data;
       try {
         data = JSON.parse(event.data);
@@ -235,12 +222,51 @@
         document.getElementById('corruption-status').style.borderColor = '#3fb950';
         log(`Balance ack: ${data.balance}`, 'ok');
       }
-    };
+    }
+
+    function connectWS() {
+      // ── FIX 1: Auto-select wss:// on HTTPS pages (required by browsers) ──────
+      const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${wsProtocol}//${location.host}`);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        reconnectAttempts = 0;
+        statusBar.textContent = '🟢 WebSocket connected — streaming live grid updates';
+        log('WebSocket connected', 'ok');
+        // Keep global reference fresh so __sendMessage always uses current socket
+        window.__ws = ws;
+      };
+
+      // ── FIX 2: Fibonacci reconnect on close ──────────────────────────────────
+      ws.onclose = () => {
+        statusBar.textContent = '🔴 WebSocket disconnected — reconnecting…';
+        log('WebSocket disconnected', 'error');
+        if (reconnectAttempts < MAX_RECONNECT) {
+          const delay = RECONNECT_DELAYS[reconnectAttempts] || 8000;
+          log(`Reconnect attempt ${reconnectAttempts + 1}/${MAX_RECONNECT} in ${delay}ms…`, 'warn');
+          reconnectAttempts++;
+          setTimeout(connectWS, delay);
+        } else {
+          statusBar.textContent = '🔴 WebSocket permanently disconnected (max retries reached)';
+          log('Max reconnect attempts reached', 'error');
+        }
+      };
+
+      ws.onerror = (e) => {
+        log(`WebSocket error (attempt ${reconnectAttempts + 1})`, 'error');
+      };
+
+      ws.onmessage = handleMessage;
+    }
+
+    // Kick off initial connection
+    connectWS();
 
     // ── Allow automation to send messages back through the WS ─────────────────
     window.__sendMessage = function(payload) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(payload));
+      if (window.__ws && window.__ws.readyState === WebSocket.OPEN) {
+        window.__ws.send(JSON.stringify(payload));
         return true;
       }
       return false;

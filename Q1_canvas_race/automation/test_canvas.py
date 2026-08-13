@@ -45,7 +45,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("Q1-Canvas")
 
-TARGET_URL = "http://localhost:3001"
+import os
+
+TARGET_URL = os.environ.get("Q1_TARGET_URL", "http://localhost:3001")
 
 # ---- Spec 1: Fibonacci delay sequence (ms), capped at 8000 ------------------
 def fibonacci_delays(cap_ms: int = 8000):
@@ -301,7 +303,7 @@ async def inject_corrupted_balance(page: Page) -> dict:
 
 async def main():
     log.info("=" * 70)
-    log.info("  Q1 -- Canvas Race Interception Automation Starting")
+    log.info("  Q1 -- Canvas Race Interception | Kusuma")
     log.info("=" * 70)
 
     async with async_playwright() as p:
@@ -334,13 +336,14 @@ async def main():
 
         # ---- Navigate -------------------------------------------------------
         log.info(f"[Nav] Opening {TARGET_URL}")
-        await page.goto(TARGET_URL, wait_until="domcontentloaded")
+        await page.goto(TARGET_URL, wait_until="networkidle", timeout=30000)
         log.info("[Nav] Page loaded -- canvas grid initialising (all cells gray)")
 
         # Wait for WS connection (DOM-event-driven, not a sleep)
         await page.wait_for_function(
             "() => document.getElementById('status-bar').textContent.includes('connected')",
-            timeout=10000
+            timeout=30000,
+            polling=500,
         )
         log.info("[Nav] [OK] WebSocket confirmed connected")
 
